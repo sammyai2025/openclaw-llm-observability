@@ -23,6 +23,16 @@ if (!originalFetch) {
     return INCLUDE_HINTS.some(h => hay.includes(h.toLowerCase())) || /\/v1\/(chat\/completions|responses|messages)/i.test(url);
   }
 
+  function guessProvider(url) {
+    const low = url.toLowerCase();
+    if (low.includes('anthropic')) return 'anthropic';
+    if (low.includes('copilot')) return 'github-copilot';
+    if (low.includes('openai')) return 'openai';
+    if (low.includes('openrouter')) return 'openrouter';
+    if (low.includes('googleapis') || low.includes('gemini')) return 'google';
+    return 'unknown';
+  }
+
   function parseUsage(provider, data) {
     const usage = data?.usage || {};
     if (provider === 'anthropic') {
@@ -44,28 +54,81 @@ if (!originalFetch) {
     const details = usage.input_tokens_details || usage.prompt_tokens_details || {};
     const cached = details.cached_tokens ?? details.cache_read_tokens ?? null;
     const uncached = input != null && cached != null ? Math.max(0, input - cached) : null;
+    const reasoning = (usage.output_tokens_details || {}).reasoning_tokens ?? null;
     return {
       input_tokens: input,
       input_cached_tokens: cached,
       input_uncached_tokens: uncached,
       output_tokens: output,
+      reasoning_tokens: reasoning,
       total_tokens: total,
     };
   }
 
-  function guessProvider(url) {
-    const low = url.toLowerCase();
-    if (low.includes('anthropic')) return 'anthropic';
-    if (low.includes('copilot')) return 'github-copilot';
-    if (low.includes('openai')) return 'openai';
-    if (low.includes('openrouter')) return 'openrouter';
-    if (low.includes('googleapis') || low.includes('gemini')) return 'google';
-    return 'unknown';
+  function parseEventStream(text) {
+    const events = [];
+    const blocks = text.split(/\n\n+/);
+    for (const block of blocks) {
+      const trimmed = block.trim();
+      if (!trimmed) continue;
+      let eventName = 'message';
+      const dataLines = [];
+      for (const line of trimmed.split('\n')) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+      }
+      const dataText = dataLines.join('\n');
+      let data = null;
+      if (dataText && dataText !== '[DONE]') {
+        try { data = JSON.parse(dataText); } catch {}
+      }
+      events.push({ event: eventName, data, raw: dataText });
+    }
+    return events;
+  }
+
+  function extractFromSse(provider, responseText) {
+    const events = parseEventStream(responseText);
+    const outputParts = [];
+    let finalResponse = null;
+    for (const ev of events) {
+      const data = ev.data || {};
+      const response = data.response || data;
+      if (ev.event === 'response.output_text.delta' && typeof data.delta === 'string') {
+        outputParts.push(data.delta);
+      }
+      if (ev.event === 'response.completed' || ev.event === 'response.incomplete' || ev.event === 'response.failed') {
+        finalResponse = response;
+      }
+      if (!finalResponse && response && typeof response === 'object' && response.status === 'completed') {
+        finalResponse = response;
+      }
+    }
+    const usage = parseUsage(provider, finalResponse || {});
+    const responseTextFinal = outputParts.join('').trim() || extractResponseText(finalResponse) || null;
+    return {
+      finalResponse,
+      usage,
+      responseTextFinal,
+      eventsCount: events.length,
+    };
   }
 
   function extractPromptText(body) {
     if (!body || typeof body !== 'object') return null;
     if (typeof body.input === 'string') return body.input;
+    if (Array.isArray(body.input)) {
+      const parts = [];
+      for (const item of body.input) {
+        if (item && typeof item === 'object' && typeof item.content === 'string') parts.push(item.content);
+        else if (item && typeof item === 'object' && Array.isArray(item.content)) {
+          for (const c of item.content) {
+            if (typeof c?.text === 'string') parts.push(c.text);
+          }
+        }
+      }
+      if (parts.length) return parts.join('\n\n');
+    }
     if (Array.isArray(body.messages)) {
       const parts = [];
       for (const msg of body.messages) {
@@ -127,32 +190,37 @@ if (!originalFetch) {
     } catch {}
 
     const provider = guessProvider(url);
-    const usage = parseUsage(provider, responseJson || {});
+    const sse = !responseJson && responseText.includes('event:');
+    const sseParsed = sse ? extractFromSse(provider, responseText) : null;
+    const normalizedResponse = sseParsed?.finalResponse || responseJson || { raw: responseText.slice(0, 12000) };
+    const usage = sseParsed?.usage || parseUsage(provider, responseJson || {});
     const payload = {
-      trace_id: responseJson?.id || null,
+      trace_id: normalizedResponse?.id || responseJson?.id || null,
       created_at: new Date(started).toISOString(),
       finished_at: new Date().toISOString(),
       latency_ms: Date.now() - started,
       provider,
-      model: responseJson?.model || requestJson?.model || null,
+      model: normalizedResponse?.model || responseJson?.model || requestJson?.model || null,
       status: response.ok ? 'ok' : 'error',
       error_type: response.ok ? null : `http_${response.status}`,
       error_message: response.ok ? null : responseText.slice(0, 2000),
       prompt_text: extractPromptText(requestJson),
-      response_text: extractResponseText(responseJson),
+      response_text: sseParsed?.responseTextFinal || extractResponseText(normalizedResponse) || extractResponseText(responseJson),
       request_json: requestJson || { raw: requestBodyText.slice(0, 4000) },
-      response_json: responseJson || { raw: responseText.slice(0, 4000) },
+      response_json: normalizedResponse,
       metadata_json: {
         source: 'http-observer',
         url,
         method,
         status_code: response.status,
+        sse: sse || false,
+        events_count: sseParsed?.eventsCount || null,
       },
       ...usage,
     };
 
     try {
-      fs.appendFileSync(DEBUG_LOG, JSON.stringify({ ts: new Date().toISOString(), provider, url, model: payload.model, prompt: payload.prompt_text?.slice(0, 160), status: payload.status }) + '\n');
+      fs.appendFileSync(DEBUG_LOG, JSON.stringify({ ts: new Date().toISOString(), provider, url, model: payload.model, prompt: payload.prompt_text?.slice(0, 160), status: payload.status, sse: !!sse }) + '\n');
     } catch {}
 
     try {
