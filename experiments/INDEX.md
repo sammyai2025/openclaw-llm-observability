@@ -6,3 +6,4 @@
 - 004 — 2026-03-23 20:24 UTC — Run the observability app as a persistent user systemd service so port 8091 stays up
 - 005 — 2026-03-23 20:48 UTC — Add direct OpenClaw runtime patcher to emit real traces at the LLM output boundary
 - 006 — 2026-03-23 21:28 UTC — Pivot to provider-proxy mode so LLM call capture happens at the network boundary
+- 007 — 2026-03-23 21:40 UTC — Add gateway HTTP observer preload for built-in provider traffic like GitHub Copilot
