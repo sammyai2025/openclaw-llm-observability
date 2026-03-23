@@ -20,6 +20,18 @@ It does **not** yet patch OpenClaw automatically. Instead, it gives you the serv
 
 ## Quick start
 
+### Fastest local mode (no Postgres needed)
+
+```bash
+cp .env.example .env
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8091
+```
+
+### Docker + Postgres mode
+
 ```bash
 cp .env.example .env
 docker compose up --build
