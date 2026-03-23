@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>OpenClaw LLM Observability</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; background: #f8fafc; color: #0f172a; }
+      header { background: #0f172a; color: white; padding: 20px; }
+      h1 { margin: 0 0 12px; }
+      form { display: flex; gap: 8px; flex-wrap: wrap; }
+      input, button, select { padding: 10px; border-radius: 10px; border: 1px solid #cbd5e1; }
+      button { background: #2563eb; color: white; border: 0; cursor: pointer; }
+      main { padding: 16px 20px 40px; }
+      table { width: 100%; border-collapse: collapse; background: white; }
+      th, td { font-size: 13px; text-align: left; padding: 10px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+      th { background: #eff6ff; position: sticky; top: 0; }
+      .mono { font-family: ui-monospace, monospace; word-break: break-all; max-width: 380px; }
+      details { max-width: 460px; }
+      summary { cursor: pointer; color: #2563eb; }
+      .small { color: #475569; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>OpenClaw LLM Observability</h1>
+      <form method="get" action="/admin">
+        <input name="provider" placeholder="provider" value="{{ filters.provider }}" />
+        <input name="model" placeholder="model" value="{{ filters.model }}" />
+        <input name="agent_id" placeholder="agent id" value="{{ filters.agent_id }}" />
+        <input name="channel" placeholder="channel" value="{{ filters.channel }}" />
+        <input name="status" placeholder="status" value="{{ filters.status }}" />
+        <button type="submit">Filter</button>
+      </form>
+    </header>
+    <main>
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Provider / Model</th>
+            <th>Agent / Session</th>
+            <th>Tokens</th>
+            <th>Latency</th>
+            <th>Status</th>
+            <th>Prompt</th>
+            <th>Response</th>
+            <th>Payloads</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td>{{ row.created_at }}<div class="small">{{ row.channel or '' }}</div></td>
+            <td>{{ row.provider or '' }}<div class="small">{{ row.model or '' }}</div></td>
+            <td>{{ row.agent_id or '' }}<div class="small mono">{{ row.session_key or '' }}</div></td>
+            <td>
+              in: {{ row.input_tokens or 0 }}<br>
+              cached: {{ row.input_cached_tokens or 0 }}<br>
+              uncached: {{ row.input_uncached_tokens or 0 }}<br>
+              out: {{ row.output_tokens or 0 }}<br>
+              total: {{ row.total_tokens or 0 }}
+            </td>
+            <td>{{ row.latency_ms or '' }} ms</td>
+            <td>{{ row.status or '' }}<div class="small">{{ row.error_type or '' }}</div></td>
+            <td><details><summary>view</summary><div class="mono">{{ row.prompt_text or '' }}</div></details></td>
+            <td><details><summary>view</summary><div class="mono">{{ row.response_text or '' }}</div></details></td>
+            <td>
+              <details><summary>request</summary><pre class="mono">{{ row.request_json }}</pre></details>
+              <details><summary>response</summary><pre class="mono">{{ row.response_json }}</pre></details>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </main>
+  </body>
+</html>
